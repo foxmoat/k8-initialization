@@ -9,7 +9,7 @@ resource "azurerm_resource_group" "rg" {
 
 # Create virtual network
 resource "azurerm_virtual_network" "myterraformnetwork" {
-  name                = "myVnet"
+  name                = "k8Vnet"
   address_space       = ["10.0.0.0/16"]
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -17,7 +17,7 @@ resource "azurerm_virtual_network" "myterraformnetwork" {
 
 # Create subnet
 resource "azurerm_subnet" "myterraformsubnet" {
-  name                 = "mySubnet"
+  name                 = "k8Subnet"
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.myterraformnetwork.name
   address_prefixes     = ["10.0.1.0/24"]
@@ -25,7 +25,7 @@ resource "azurerm_subnet" "myterraformsubnet" {
 
 # Create public IPs
 resource "azurerm_public_ip" "myterraformpublicip" {
-  name                = "myPublicIP"
+  name                = "k8-master1-publicIp"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Dynamic"
@@ -33,7 +33,7 @@ resource "azurerm_public_ip" "myterraformpublicip" {
 
 # Create Network Security Group and rule
 resource "azurerm_network_security_group" "myterraformnsg" {
-  name                = "myNetworkSecurityGroup"
+  name                = "k8NetworkSecurityGroup"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
@@ -51,22 +51,25 @@ resource "azurerm_network_security_group" "myterraformnsg" {
 }
 
 # Create network interface
-resource "azurerm_network_interface" "myterraformnic" {
-  name                = "myNIC"
+resource "azurerm_network_interface" "k8-static-nic" {
+  for_each = var.vmlist
+  name                = "${each.value.hostname}-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
   ip_configuration {
-    name                          = "myNicConfiguration"
+    name                          = "k8-nic-configuration"
     subnet_id                     = azurerm_subnet.myterraformsubnet.id
-    private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.myterraformpublicip.id
+    private_ip_address_allocation = "Static"
+    private_ip_address            = each.value.private_ip_address
+    public_ip_address_id          = "${each.value.public_ip_address == true ? azurerm_public_ip.myterraformpublicip.id : null}" 
   }
 }
 
 # Connect the security group to the network interface
 resource "azurerm_network_interface_security_group_association" "example" {
-  network_interface_id      = azurerm_network_interface.myterraformnic.id
+  for_each = var.vmlist
+  network_interface_id      = azurerm_network_interface.k8-static-nic[each.key].id
   network_security_group_id = azurerm_network_security_group.myterraformnsg.id
 }
 
@@ -97,14 +100,15 @@ resource "tls_private_key" "example_ssh" {
 
 # Create virtual machine
 resource "azurerm_linux_virtual_machine" "myterraformvm" {
-  name                  = "myVM"
+  for_each = var.vmlist
+  name                  = each.value.hostname
   location              = azurerm_resource_group.rg.location
   resource_group_name   = azurerm_resource_group.rg.name
-  network_interface_ids = [azurerm_network_interface.myterraformnic.id]
+  network_interface_ids = [azurerm_network_interface.k8-static-nic[each.key].id]
   size                  = "Standard_DS1_v2"
 
   os_disk {
-    name                 = "myOsDisk"
+    name                 = "${each.value.hostname}-myOsDisk"
     caching              = "ReadWrite"
     storage_account_type = "Premium_LRS"
   }
@@ -116,7 +120,7 @@ resource "azurerm_linux_virtual_machine" "myterraformvm" {
     version   = "latest"
   }
 
-  computer_name                   = "myvm"
+  computer_name                   = each.value.hostname
   admin_username                  = "azureuser"
   disable_password_authentication = true
 
