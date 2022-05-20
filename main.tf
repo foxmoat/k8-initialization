@@ -31,6 +31,16 @@ resource "azurerm_public_ip" "myterraformpublicip" {
   allocation_method   = "Dynamic"
 }
 
+data "azurerm_key_vault" "azurekv" {
+  name = "k8-init-keyvault"
+  resource_group_name = "k8-initialization"
+}
+
+data "azurerm_key_vault_secret" "azureuser" {
+  name = "azureuserpub"
+  key_vault_id = data.azurerm_key_vault.azurekv.id
+}
+
 # Create Network Security Group and rule
 resource "azurerm_network_security_group" "myterraformnsg" {
   name                = "k8NetworkSecurityGroup"
@@ -120,7 +130,7 @@ resource "azurerm_linux_virtual_machine" "myterraformvm" {
 
   admin_ssh_key {
     username   = "azureuser"
-    public_key = file("~/.ssh/id_rsa.pub")
+    public_key = "${data.azurerm_key_vault_secret.azureuser.value}"
   }
 
   boot_diagnostics {
