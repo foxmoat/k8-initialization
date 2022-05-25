@@ -8,6 +8,11 @@ variable "resource_group_location" {
   description   = "Location of the resource group."
 }
 
+#variable "resource_depends_on" {
+#  type    = any
+#  default = null
+#}
+
 variable "vmlist" {
   type = map(object({
     hostname = string

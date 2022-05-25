@@ -1,0 +1,56 @@
+#cloud-config
+# https://docs.microsoft.com/en-us/azure/virtual-machines/linux/using-cloud-init#cloud-init-overview
+# if you need to troubleshoot any errors or omissions from the configuration, you need to search for the module name (disk_setup or runcmd for example) in the cloud-init log - located in /var/log/cloud-init.log.
+package_update: true
+package_upgrade: true
+packages:
+  # Update the apt package index and install packages needed to use the Docker and Kubernetes apt repositories over HTTPS
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+
+# Let iptables see bridged traffic
+# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#letting-iptables-see-bridged-traffic
+write_files:
+ - path: /etc/modules-load.d/containerd.conf
+   content: |
+    br_netfilter  
+    overlay
+ 
+ - path: /etc/sysctl.d/99-kubernetes-cri.conf
+   content: |
+    net.bridge.bridge-nf-call-ip6tables = 1
+    net.bridge.bridge-nf-call-iptables  = 1
+    net.ipv4.ip_forward                 = 1
+# create the docker group
+groups:
+  - docker
+
+# Add default auto created user to docker group
+system_info:
+  default_user:
+    groups: [docker]
+
+runcmd:
+ - modprobe overlay
+ - modprobe br_netfilter # Load br_netfilter module.
+ - sysctl --system # Reload settings from all system configuration files to take iptables configuration
+ - apt-get update -y # Update apt package index
+ - apt-get install -y containerd #docker-ce docker-ce-cli containerd.io kubelet kubeadm kubectl # Install Docker Engine, kubelet, kubeadm and kubectl 
+ - mkdir -p /etc/containerd
+ - containerd config default | sudo tee /etc/containerd/config.toml
+ - sed -i 's/            SystemdCgroup = false/            SystemdCgroup = true/' /etc/containerd/config.toml
+ - systemctl restart containerd
+ - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg # Add Docker’s official GPG key
+ - curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg # Download the Google Cloud public signing key:
+ - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null # set up the stable repository
+ - echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list # Add the Kubernetes apt repository
+ - apt-get update
+ - VERSION=1.23.4-00
+ - apt-get install -y kubelet=$VERSION kubeadm=$VERSION kubectl=$VERSION
+ - apt-mark hold kubelet kubeadm kubectl containerd # pin kubelet kubeadm kubectl version
+ - systemctl enable kubelet.service
+ - systemctl enable containerd.service

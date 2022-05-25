@@ -5,6 +5,9 @@ output "resource_group_name" {
 output "public_ip_address" {
   value = [
     for myterraformvm in azurerm_linux_virtual_machine.myterraformvm : myterraformvm.public_ip_address
-  ]
-  
+  ]  
+}
+
+output "public_fqdn_address" {
+  value = "${azurerm_public_ip.myterraformpublicip.fqdn}"
 }

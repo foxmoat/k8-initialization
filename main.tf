@@ -28,7 +28,14 @@ resource "azurerm_public_ip" "myterraformpublicip" {
   name                = "k8-master1-publicIp"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  allocation_method   = "Dynamic"
+  allocation_method   = "Static"
+  domain_name_label   = "k8-master1-publicip"
+}
+
+data "azurerm_public_ip" "myterraformpublicip" {
+  name                = azurerm_public_ip.myterraformpublicip.name
+  resource_group_name = azurerm_resource_group.rg.name
+  depends_on          = [azurerm_linux_virtual_machine.myterraformvm["vm1"]]
 }
 
 data "azurerm_key_vault" "azurekv" {
@@ -36,8 +43,13 @@ data "azurerm_key_vault" "azurekv" {
   resource_group_name = "k8-initialization"
 }
 
-data "azurerm_key_vault_secret" "azureuser" {
+data "azurerm_key_vault_secret" "azureuserpub" {
   name = "azureuserpub"
+  key_vault_id = data.azurerm_key_vault.azurekv.id
+}
+
+data "azurerm_key_vault_secret" "azureuserpriv" {
+  name = "azureuserpriv"
   key_vault_id = data.azurerm_key_vault.azurekv.id
 }
 
@@ -109,7 +121,8 @@ resource "azurerm_linux_virtual_machine" "myterraformvm" {
   location              = azurerm_resource_group.rg.location
   resource_group_name   = azurerm_resource_group.rg.name
   network_interface_ids = [azurerm_network_interface.k8-static-nic[each.key].id]
-  size                  = "Standard_DS1_v2"
+  size                  = "Standard_DS2_v2"
+  custom_data           = filebase64("k8-scripts/k8-install.yml")
 
   os_disk {
     name                 = "${each.value.hostname}-myOsDisk"
@@ -130,10 +143,45 @@ resource "azurerm_linux_virtual_machine" "myterraformvm" {
 
   admin_ssh_key {
     username   = "azureuser"
-    public_key = "${data.azurerm_key_vault_secret.azureuser.value}"
+    public_key = "${data.azurerm_key_vault_secret.azureuserpub.value}"
   }
 
   boot_diagnostics {
     storage_account_uri = azurerm_storage_account.mystorageaccount.primary_blob_endpoint
   }
+}
+
+#resource "time_sleep" "wait_for_myterraformvm_vm1" {
+#  depends_on      = [azurerm_linux_virtual_machine.myterraformvm["vm1"]]
+#  create_duration = "300s"
+#}
+
+resource "null_resource" "upload" {
+  connection {
+    host = "${azurerm_public_ip.myterraformpublicip.fqdn}" #"${data.azurerm_public_ip.myterraformpublicip.ip_address}" #https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/data-sources/public_ip#example-usage-retrieve-the-dynamic-public-ip-of-a-new-vm
+    type = "ssh"
+    user = "azureuser"
+    private_key = "${data.azurerm_key_vault_secret.azureuserpriv.value}"
+  }
+
+  provisioner "file" {
+    content     = "${data.azurerm_key_vault_secret.azureuserpriv.value}"
+    destination = "/home/azureuser/.ssh/id_rsa"
+  }
+
+  provisioner "file" {
+    source     = "k8-scripts/k8-init.sh"
+    destination = "/home/azureuser/k8-init.sh"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod 600 /home/azureuser/.ssh/id_rsa",
+      "chmod 700 /home/azureuser/k8-init.sh",
+      "sudo cp /home/azureuser/.ssh/id_rsa /root/.ssh",
+      "sudo /home/azureuser/k8-init.sh",
+    ]
+  }
+
+  depends_on = [azurerm_linux_virtual_machine.myterraformvm["vm1"]]
 }
